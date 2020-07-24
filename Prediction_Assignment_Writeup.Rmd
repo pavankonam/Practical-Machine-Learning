@@ -1,0 +1,196 @@
+---
+title: "Prediction Assignment Writeup"
+author: "Pavan Kartheek"
+date: "7/23/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Background
+-----------
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+
+Data Loading and Exploratory Analysis
+--------------------------------------
+#Preparation
+
+Load the required Packages
+```{r}
+required.packages <- c("knitr", "caret", "rpart", "rpart.plot", "rattle", "randomForest", "corrplot")
+ sapply(required.packages, library, character.only = T)
+```
+
+Download and Load data-sets.
+```{r}
+setwd("~/R/Data/Data Science Specialization/08 - Practical Machine Learning/Peer Assignment/")
+Training.URL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+Test.URL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+Training.Set <- "pml-training.csv"
+Test.Set <- "pml-testing.csv"
+
+if(!file.exists(Training.Set))
+  {
+  download.file(Training.URL, Training.Set, method = "wget")
+  }
+training <- read.csv(Training.Set)
+
+if(!file.exists(Test.Set))
+  {
+  download.file(Test.URL, Test.Set, method = "wget")
+  }
+testing  <- read.csv(Test.Set)
+```
+
+
+Create a partition with the training dataset 
+```{r}
+set.seed(2468)
+inTrain  <- createDataPartition(training$classe, p=0.7, list=FALSE)
+Train.partition <- training[inTrain, ]
+Test.partition  <- training[-inTrain, ]
+```
+
+```{r}
+dim(Train.partition)
+dim(Test.partition)
+```
+
+#Cleaning the Data
+Both datasets have 160 variables. Those variables have plenty of NA, Near Zero variance (NZV) variables and ID variables that can be removed
+
+```{r}
+# remove variables with Nearly Zero Variance
+NZV <- nearZeroVar(Train.partition)
+Train.partition <- Train.partition[, -NZV]
+Test.partition  <- Test.partition[, -NZV]
+```
+
+
+```{r}
+# remove variables that are mostly NA
+NA.removal  <- sapply(Train.partition, function(x) mean(is.na(x))) > 0.95
+Train.partition <- Train.partition[, NA.removal==FALSE]
+Test.partition  <- Test.partition[, NA.removal==FALSE]
+```
+
+
+```{r}
+# remove identification only variables (columns 1 to 5)
+Train.partition <- Train.partition[, -(1:5)]
+Test.partition  <- Test.partition[, -(1:5)]
+```
+
+
+```{r}
+dim(Train.partition)
+dim(Test.partition)
+```
+
+After cleaning the data the variables reduced to 54 var.
+53 will used to build the models, and the last one "No. 54" is the outcome.
+
+Correlation Analysis
+---------------------
+A correlation among variables is analysed before proceeding to the modeling procedures.
+
+```{r}
+corMatrix <- cor(Train.partition[, -54])
+corrplot(corMatrix, order = "FPC", method = "color", type = "lower", 
+         tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+```
+
+Building Prediction Model 
+---------------------------
+
+#Cross Validation "Random Forest"
+Creating the Model
+```{r}
+set.seed(2468)
+crossVaildMod = trainControl(method="cv",number=3,allowParallel=T,verboseIter=T)
+RandomForestModel = train(classe~., data=Train.partition, method="rf",trControl= crossVaildMod)
+RandomForestModel$finalModel
+```
+
+Predecting using the prevuies model
+```{r}
+predictRandomForest <- predict(RandomForestModel, newdata=Test.partition)
+confMatRandomForest <- confusionMatrix(predictRandomForest, Test.partition$classe)
+confMatRandomForest
+```
+
+```{r}
+# plot matrix results
+plot(confMatRandomForest$table, col = confMatRandomForest$byClass, 
+     main = paste("Random Forest - Accuracy =",
+                  round(confMatRandomForest$overall['Accuracy'], 4)))
+```
+
+#Decision Trees
+Creating the Model
+```{r}
+set.seed(2468)
+decisionTreeModel <- rpart(classe ~ ., data=Train.partition, method="class")
+fancyRpartPlot(decisionTreeModel)
+```
+
+Predecting using the prevuies model
+```{r}
+predictDecisionTree <- predict(decisionTreeModel, newdata=Test.partition, type="class")
+confMatDecisionTree <- confusionMatrix(predictDecisionTree, Test.partition$classe)
+confMatDecisionTree
+```
+
+```{r}
+# plot matrix results
+plot(confMatDecisionTree$table, col = confMatDecisionTree$byClass, 
+     main = paste("Decision Trees - Accuracy =",
+                  round(confMatDecisionTree$overall['Accuracy'], 4)))
+```
+
+
+#Generalized Boosted Model
+Creating the Model
+```{r}
+set.seed(2468)
+controlGBM <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+GBM.Model  <- train(classe ~ ., data=Train.partition, method = "gbm",
+                    trControl = controlGBM, verbose = FALSE)
+GBM.Model$finalModel
+# in some cases u may get this msg andu need to accept it in order to using the gbm model
+# 1 package is needed for this model and is not installed. (gbm). Would you like to try to install it now?
+# 1: yes
+# 2: no
+```
+
+Predecting using the prevuies model
+```{r}
+predictGBM<- predict(GBM.Model, newdata=Test.partition)
+confMatGBM <- confusionMatrix(predictGBM, Test.partition$classe)
+confMatGBM
+```
+
+```{r}
+# plot matrix results
+plot(confMatGBM$table, col = confMatGBM$byClass, 
+     main = paste("Generalized Boosted Model - Accuracy =",
+                  round(confMatGBM$overall['Accuracy'], 4)))
+```
+
+The accuracy of the 3 regression modeling methods above are:
+
+Cross Validation "Random Forest" : 0.9976
+Decision Tree : 0.7686
+Generalized Boosted Model : 0.9859
+
+from the showen Accuracy (Cross Validation "Random Forest") is the best model and will used to predect the testing set.
+
+Applying the (Cross Validation "Random Forest") to the testing set
+-------------------------------------------------------------------
+```{r}
+predictTest <- predict(RandomForestModel, newdata=testing)
+predictTest
+````
